@@ -1,0 +1,37 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Minimal user record: uid -> email + displayName only, used solely so
+    // Method A (call-by-email) can resolve an email to a uid. No call
+    // history, no contact lists, no metadata beyond what's needed to ring
+    // someone. A user can only write their own record.
+    match /users/{uid} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Signaling rooms are fully ephemeral: created when a call starts,
+    // deleted by the client when the call ends. They hold SDP offers/
+    // answers and ICE candidates only — never media, never chat content
+    // (chat rides the WebRTC data channel directly, peer-to-peer, and
+    // never touches Firestore).
+    match /rooms/{roomId} {
+      allow read, write: if request.auth != null;
+
+      match /callerCandidates/{candidateId} {
+        allow read, write: if request.auth != null;
+      }
+      match /calleeCandidates/{candidateId} {
+        allow read, write: if request.auth != null;
+      }
+    }
+
+    // Ring notifications for Method A (direct email calling): a thin,
+    // short-lived pointer from "someone is calling you" to a roomId.
+    // Deleted immediately once answered or declined.
+    match /invites/{inviteId} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}
