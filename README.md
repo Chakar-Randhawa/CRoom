@@ -4,6 +4,62 @@ Privacy-first, browser-based video calling. Next.js 14 (App Router) + Firebase
 Auth (email/password only) + Firestore (used purely as an ephemeral WebRTC
 signaling channel) + native WebRTC for the actual call media.
 
+## Updating your existing GitHub repo
+
+I can't push to your repo directly from here — I don't have write access to
+your GitHub account. To bring your repo up to date with this version,
+from inside this unzipped folder:
+
+```bash
+git init
+git remote add origin https://github.com/Chakar-Randhawa/CRoom.git
+git fetch origin
+git checkout -b main --track origin/main   # or whatever your default branch is called
+git add -A
+git commit -m "Redesign: Nomu-inspired theme, real motion system, fix call-screen viewport bug, camera clarity filter"
+git push origin main
+```
+
+If that conflicts because your remote history and this folder don't share a
+common base, force-pushing will overwrite the remote with this version:
+```bash
+git push origin main --force
+```
+Only do that if you're fine replacing everything currently in the repo —
+double-check first if there's anything on GitHub you haven't backed up
+locally. After pushing, Vercel will redeploy automatically if it's connected
+to that repo/branch.
+
+## What changed in this pass (from the previous version)
+
+- **Theme**: rebuilt to match nomu.store — warm cream background, faint
+  graph-paper grid, coral/orange accent, Baloo 2 bubble wordmark, floating
+  pill navbar with a sliding active-tab indicator.
+- **Motion**: every route change now transitions; the boot sequence is a
+  real ~3.5s paced sequence (letter-reveal, progress bar, ambient glow)
+  instead of a 1-2s flash; primary buttons are magnetic (cursor-attracted)
+  with spring hover/tap; page sections and the comparison table reveal on
+  scroll.
+- **Fixed: call screen requiring scroll.** The old layout used
+  `min-height`, which lets content grow past the viewport. The call screen
+  now locks to `height: 100dvh` (the browser's real, current visible area),
+  so it fits exactly on laptop, tablet, or phone with no scrolling, and the
+  local video preview and control bar scale/reposition responsively
+  (including safe-area padding for phones with a home indicator).
+- **Fixed: a stale-closure bug** in the adaptive bitrate monitor that could
+  silently prevent the low-bandwidth step-down from ever applying (it was
+  reading a `null` stream reference captured before the camera stream was
+  ready). Now reads from a ref that's always current.
+- **Fixed: an ICE-candidate race condition** that could intermittently
+  break connection setup if a candidate arrived before the remote SDP was
+  set. Candidates now queue and flush safely.
+- **New: a real-time camera clarity filter** — a canvas pipeline that
+  auto-adjusts contrast/saturation/brightness and does a temporal blend
+  against the previous frame to reduce visible sensor grain/scratches from
+  cheap webcams, then swaps the actual track sent over WebRTC via
+  `replaceTrack` (so the other person sees the improvement, not just your
+  own preview). Toggle it with the sparkle button in the call controls.
+
 ## What's real here vs. what you need to configure
 
 Every file in this project is complete, working code — there are no stubs or
@@ -63,6 +119,12 @@ Every file in this project is complete, working code — there are no stubs or
   every few seconds; on sustained packet loss or high RTT it steps the video
   sender's `maxBitrate` and resolution down (720p → 360p → audio-only) and
   steps back up once the network recovers, without ever tearing down the call.
+- **Camera clarity filter** — `startEnhancement()`/`stopEnhancement()` in
+  `lib/webrtc.ts` run the local camera track through an off-screen canvas,
+  apply an auto contrast/saturation lift plus a low-opacity temporal blend
+  against the prior frame (reduces flickering sensor noise while motion
+  stays sharp), then send the canvas's `captureStream()` track over the
+  peer connection in place of the raw camera track.
 
 ## Known scope boundaries (worth knowing before you ship this)
 
@@ -72,6 +134,9 @@ Every file in this project is complete, working code — there are no stubs or
   without relying on the visitor's own email client.
 - There's no user directory/search UI — Method A requires knowing the exact
   email someone signed up with, matching the spec's "email target lookup."
-- Boot sequence, onboarding, and tactile press mechanics are implemented with
-  Framer Motion and real CSS transforms — extend `BootSequence.tsx` and the
-  `.tactile` class in `globals.css` if you want to push the motion further.
+- The camera clarity filter is a real-time canvas/CSS-filter pipeline, not a
+  machine-learning denoiser — it meaningfully reduces flickery sensor grain
+  and gives a cleaner, more contrasty image, but it won't fix a genuinely
+  broken or very low-light camera the way a dedicated ML noise-reduction
+  model (e.g. Nvidia Broadcast) would.
+
