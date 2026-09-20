@@ -44,7 +44,13 @@ export default function CallByEmailModal({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 px-5 backdrop-blur-sm">
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.2 }}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 px-5 backdrop-blur-sm"
+    >
       <motion.div
         initial={{ opacity: 0, scale: 0.96, y: 8 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -61,9 +67,9 @@ export default function CallByEmailModal({ onClose }: { onClose: () => void }) {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="friend@example.com"
-            className="rounded-tile border border-hairline px-4 py-3 text-sm outline-none focus:border-pine"
+            className="rounded-tile border border-hairline px-4 py-3 text-sm outline-none focus:border-coral"
           />
-          {errorMessage && <p className="text-sm text-clay-dark">{errorMessage}</p>}
+          {errorMessage && <p className="text-sm text-coral-dark">{errorMessage}</p>}
           <div className="mt-2 flex gap-2">
             <button
               type="button"
@@ -75,13 +81,13 @@ export default function CallByEmailModal({ onClose }: { onClose: () => void }) {
             <button
               type="submit"
               disabled={status === "searching" || status === "ringing"}
-              className="tactile flex-1 rounded-pill bg-clay px-4 py-3 text-sm font-semibold text-paper disabled:opacity-60"
+              className="tactile flex-1 rounded-pill bg-coral px-4 py-3 text-sm font-bold text-paper disabled:opacity-60"
             >
               {status === "searching" ? "Looking up…" : status === "ringing" ? "Ringing…" : "Call"}
             </button>
           </div>
         </form>
       </motion.div>
-    </div>
+    </motion.div>
   );
 }

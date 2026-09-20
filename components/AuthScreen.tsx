@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { motion } from "framer-motion";
 import { useAuth } from "@/context/AuthContext";
+import MagneticButton from "@/components/MagneticButton";
 
 export default function AuthScreen() {
   const { signUp, logIn } = useAuth();
@@ -38,7 +39,7 @@ export default function AuthScreen() {
   }
 
   return (
-    <div className="dvh-screen flex items-center justify-center bg-paper px-6">
+    <div className="min-h-dvh flex items-center justify-center bg-paper bg-grid-paper px-6">
       <motion.div
         initial={{ opacity: 0, y: 14 }}
         animate={{ opacity: 1, y: 0 }}
@@ -83,18 +84,18 @@ export default function AuthScreen() {
           />
 
           {error && (
-            <p role="alert" className="rounded-tile bg-clay/10 px-3 py-2 text-sm text-clay-dark">
+            <p role="alert" className="rounded-tile bg-coral/10 px-3 py-2 text-sm text-coral-dark">
               {error}
             </p>
           )}
 
-          <button
+          <MagneticButton
             type="submit"
             disabled={submitting}
-            className="tactile mt-2 rounded-pill bg-pine px-6 py-3.5 text-sm font-semibold text-paper shadow-tile disabled:opacity-60"
+            className="tactile mt-2 rounded-pill bg-coral px-6 py-3.5 text-sm font-bold text-paper shadow-tile disabled:opacity-60"
           >
             {submitting ? "Please wait…" : mode === "signIn" ? "Sign in" : "Sign up"}
-          </button>
+          </MagneticButton>
         </form>
 
         <button

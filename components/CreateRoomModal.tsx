@@ -34,7 +34,13 @@ export default function CreateRoomModal({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 px-5 backdrop-blur-sm">
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.2 }}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 px-5 backdrop-blur-sm"
+    >
       <motion.div
         initial={{ opacity: 0, scale: 0.96, y: 8 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -67,12 +73,12 @@ export default function CreateRoomModal({ onClose }: { onClose: () => void }) {
           </button>
           <button
             onClick={enterRoom}
-            className="tactile flex-1 rounded-pill bg-clay px-4 py-3 text-sm font-semibold text-paper"
+            className="tactile flex-1 rounded-pill bg-coral px-4 py-3 text-sm font-bold text-paper"
           >
             Enter room
           </button>
         </div>
       </motion.div>
-    </div>
+    </motion.div>
   );
 }

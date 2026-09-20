@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { AnimatePresence, motion } from "framer-motion";
 import AuthGuard from "@/components/AuthGuard";
 import { useWebRTC, type CallQuality } from "@/lib/webrtc";
 
@@ -39,11 +40,13 @@ function RoomInner() {
     quality,
     micMuted,
     cameraOff,
+    enhanceEnabled,
     chatMessages,
     start,
     hangUp,
     toggleMic,
     toggleCamera,
+    toggleEnhance,
     sendChatMessage,
   } = useWebRTC({ roomId: target?.roomId ?? "pending", isCaller: target?.isCaller ?? false });
 
@@ -74,80 +77,117 @@ function RoomInner() {
 
   if (!target) {
     return (
-      <div className="dvh-screen flex items-center justify-center bg-ink px-6 text-center text-paper/80">
+      <div className="call-screen flex items-center justify-center bg-ink px-6 text-center text-paper/80">
         <p>This room link is missing its room code. Ask for a fresh invite link.</p>
       </div>
     );
   }
 
   return (
-    <div className="dvh-screen relative flex flex-col bg-ink">
-      <div className="relative flex-1 overflow-hidden">
-        <video
-          ref={remoteVideoRef}
-          autoPlay
-          playsInline
-          className="h-full w-full object-cover"
-        />
-        {connectionState !== "connected" && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-ink/90 text-paper">
-            <div className="h-8 w-8 animate-spin rounded-full border-2 border-paper/20 border-t-paper" />
-            <p className="text-sm text-paper/70">{statusLabel(connectionState)}</p>
-          </div>
-        )}
+    // `call-screen` locks this container to exactly 100dvh (the real,
+    // current visible viewport) and hides overflow — the fix for the
+    // "half the call is off-screen, have to scroll" bug. It self-adjusts
+    // on laptop, tablet, and phone because 100dvh is recalculated by the
+    // browser whenever its own chrome (address bar, etc.) shows or hides.
+    <div className="call-screen relative flex flex-col bg-ink">
+      <div className="relative min-h-0 flex-1 overflow-hidden">
+        <video ref={remoteVideoRef} autoPlay playsInline className="h-full w-full object-cover" />
 
-        <video
+        <AnimatePresence>
+          {connectionState !== "connected" && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-ink/90 text-paper"
+            >
+              <div className="h-8 w-8 animate-spin rounded-full border-2 border-paper/20 border-t-coral" />
+              <p className="text-sm text-paper/70">{statusLabel(connectionState)}</p>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Local preview: sized relative to viewport (vw/vh via clamp) so
+            it scales sensibly from phone to ultra-wide desktop, and sits
+            clear of the control bar via bottom offset rather than a fixed
+            pixel value that could overlap on short viewports. */}
+        <motion.video
           ref={localVideoRef}
           autoPlay
           muted
           playsInline
-          className="absolute bottom-24 right-4 h-32 w-24 rounded-tile border border-paper/20 object-cover shadow-tile sm:h-44 sm:w-32"
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+          className="absolute bottom-4 right-4 rounded-tile border border-paper/20 object-cover shadow-tile"
+          style={{
+            width: "clamp(88px, 22vw, 176px)",
+            height: "clamp(120px, 30vw, 232px)",
+          }}
         />
 
         {connectionState === "connected" && (
-          <div className="absolute left-4 top-4 rounded-pill bg-ink/70 px-3 py-1.5 text-xs font-medium text-paper/80">
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="absolute left-4 top-4 rounded-pill bg-ink/70 px-3 py-1.5 text-xs font-medium text-paper/80"
+          >
             {QUALITY_LABEL[quality]}
-          </div>
+          </motion.div>
         )}
 
-        {chatOpen && (
-          <div className="absolute bottom-0 right-0 top-0 flex w-full max-w-xs flex-col border-l border-paper/10 bg-ink/95 sm:w-80">
-            <div className="flex-1 overflow-y-auto p-4">
-              {chatMessages.length === 0 && (
-                <p className="text-sm text-paper/40">
-                  Messages here go peer-to-peer over the data channel — never through a server.
-                </p>
-              )}
-              {chatMessages.map((m, i) => (
-                <div
-                  key={i}
-                  className={`mb-2 max-w-[85%] rounded-tile px-3 py-2 text-sm ${
-                    m.from === "me" ? "ml-auto bg-pine text-paper" : "bg-white/10 text-paper"
-                  }`}
+        <AnimatePresence>
+          {chatOpen && (
+            <motion.div
+              initial={{ x: "100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "100%" }}
+              transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+              className="absolute bottom-0 right-0 top-0 flex w-full max-w-xs flex-col border-l border-paper/10 bg-ink/95 sm:w-80"
+            >
+              <div className="flex-1 overflow-y-auto p-4">
+                {chatMessages.length === 0 && (
+                  <p className="text-sm text-paper/40">
+                    Messages here go peer-to-peer over the data channel — never through a server.
+                  </p>
+                )}
+                {chatMessages.map((m, i) => (
+                  <div
+                    key={i}
+                    className={`mb-2 max-w-[85%] rounded-tile px-3 py-2 text-sm ${
+                      m.from === "me" ? "ml-auto bg-coral text-paper" : "bg-white/10 text-paper"
+                    }`}
+                  >
+                    {m.text}
+                  </div>
+                ))}
+              </div>
+              <form onSubmit={submitChat} className="flex gap-2 border-t border-paper/10 p-3">
+                <input
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  placeholder="Message"
+                  className="flex-1 rounded-pill bg-white/10 px-4 py-2 text-sm text-paper outline-none placeholder:text-paper/40"
+                />
+                <button
+                  type="submit"
+                  className="tactile rounded-pill bg-coral px-4 py-2 text-sm font-semibold text-paper"
                 >
-                  {m.text}
-                </div>
-              ))}
-            </div>
-            <form onSubmit={submitChat} className="flex gap-2 border-t border-paper/10 p-3">
-              <input
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                placeholder="Message"
-                className="flex-1 rounded-pill bg-white/10 px-4 py-2 text-sm text-paper outline-none placeholder:text-paper/40"
-              />
-              <button
-                type="submit"
-                className="tactile rounded-pill bg-pine px-4 py-2 text-sm font-semibold text-paper"
-              >
-                Send
-              </button>
-            </form>
-          </div>
-        )}
+                  Send
+                </button>
+              </form>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
-      <div className="flex items-center justify-center gap-3 bg-ink py-5">
+      {/* Control bar: fixed height, never competes with the video area for
+          space, and respects the safe-area inset on notched phones so it's
+          never clipped by a home-indicator bar. */}
+      <div
+        className="flex shrink-0 items-center justify-center gap-2.5 bg-ink py-4 sm:gap-3 sm:py-5"
+        style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}
+      >
         <ControlButton active={!micMuted} onClick={toggleMic} label={micMuted ? "Unmute" : "Mute"} icon="mic" />
         <ControlButton
           active={!cameraOff}
@@ -155,14 +195,22 @@ function RoomInner() {
           label={cameraOff ? "Camera on" : "Camera off"}
           icon="camera"
         />
+        <ControlButton
+          active={enhanceEnabled}
+          onClick={toggleEnhance}
+          label={enhanceEnabled ? "Clarity on" : "Clarity off"}
+          icon="sparkle"
+        />
         <ControlButton active={chatOpen} onClick={() => setChatOpen((o) => !o)} label="Chat" icon="chat" />
-        <button
+        <motion.button
           onClick={endCall}
-          className="tactile flex h-14 w-14 items-center justify-center rounded-full bg-clay text-paper shadow-tile"
+          whileHover={{ scale: 1.06 }}
+          whileTap={{ scale: 0.92 }}
+          className="flex h-12 w-12 items-center justify-center rounded-full bg-coral text-paper shadow-tile sm:h-14 sm:w-14"
           aria-label="End call"
         >
           <PhoneOffIcon />
-        </button>
+        </motion.button>
       </div>
     </div>
   );
@@ -192,20 +240,23 @@ function ControlButton({
   active: boolean;
   onClick: () => void;
   label: string;
-  icon: "mic" | "camera" | "chat";
+  icon: "mic" | "camera" | "chat" | "sparkle";
 }) {
   return (
-    <button
+    <motion.button
       onClick={onClick}
       aria-label={label}
-      className={`tactile flex h-14 w-14 items-center justify-center rounded-full shadow-tile ${
+      whileHover={{ scale: 1.06 }}
+      whileTap={{ scale: 0.92 }}
+      className={`flex h-12 w-12 items-center justify-center rounded-full shadow-tile sm:h-14 sm:w-14 ${
         active ? "bg-white/10 text-paper" : "bg-paper/90 text-ink"
-      }`}
+      } ${icon === "sparkle" && active ? "ring-2 ring-coral" : ""}`}
     >
       {icon === "mic" && <MicIcon off={!active} />}
       {icon === "camera" && <CameraIcon off={!active} />}
       {icon === "chat" && <ChatIcon />}
-    </button>
+      {icon === "sparkle" && <SparkleIcon />}
+    </motion.button>
   );
 }
 
@@ -233,6 +284,15 @@ function ChatIcon() {
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z" />
+    </svg>
+  );
+}
+
+function SparkleIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+      <path d="M12 2l1.6 5.4L19 9l-5.4 1.6L12 16l-1.6-5.4L5 9l5.4-1.6z" />
+      <path d="M19 15l.7 2.3L22 18l-2.3.7L19 21l-.7-2.3L16 18l2.3-.7z" />
     </svg>
   );
 }

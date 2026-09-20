@@ -64,7 +64,7 @@ export default function IncomingCallBanner() {
               </button>
               <button
                 onClick={accept}
-                className="tactile rounded-pill bg-pine px-4 py-2 text-sm font-semibold text-paper"
+                className="tactile rounded-pill bg-coral px-4 py-2 text-sm font-bold text-paper"
               >
                 Accept
               </button>

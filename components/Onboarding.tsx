@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
+import MagneticButton from "@/components/MagneticButton";
 
 const steps = [
   {
@@ -24,14 +25,14 @@ export default function Onboarding({ onDone }: { onDone: () => void }) {
   const isLast = index === steps.length - 1;
 
   return (
-    <div className="dvh-screen flex flex-col items-center justify-center bg-paper px-6">
+    <div className="min-h-dvh flex flex-col items-center justify-center bg-paper bg-grid-paper px-6">
       <div className="w-full max-w-md">
         <div className="mb-8 flex gap-1.5">
           {steps.map((_, i) => (
             <div
               key={i}
               className={`h-1 flex-1 rounded-pill transition-colors duration-300 ${
-                i <= index ? "bg-pine" : "bg-hairline"
+                i <= index ? "bg-coral" : "bg-hairline"
               }`}
             />
           ))}
@@ -58,12 +59,12 @@ export default function Onboarding({ onDone }: { onDone: () => void }) {
           >
             Skip
           </button>
-          <button
+          <MagneticButton
             onClick={() => (isLast ? onDone() : setIndex((i) => i + 1))}
-            className="tactile rounded-pill bg-ink px-7 py-3 text-sm font-semibold text-paper shadow-tile"
+            className="tactile rounded-pill bg-coral px-7 py-3 text-sm font-bold text-paper shadow-tile"
           >
             {isLast ? "Get started" : "Next"}
-          </button>
+          </MagneticButton>
         </div>
       </div>
     </div>

@@ -118,12 +118,12 @@ export default function DeviceSettings({
           step={0.05}
           value={micGain}
           onChange={(e) => onMicGainChange(parseFloat(e.target.value))}
-          className="mt-3 w-full accent-pine"
+          className="mt-3 w-full accent-coral"
           disabled={!micEnabled}
         />
         <div className="mt-3 h-1.5 w-full overflow-hidden rounded-pill bg-hairline">
           <div
-            className="h-full bg-pine transition-[width] duration-100"
+            className="h-full bg-coral transition-[width] duration-100"
             style={{ width: `${level * 100}%` }}
           />
         </div>
@@ -162,7 +162,7 @@ function ToggleTile({
       <div className="flex w-full items-center justify-between">
         <span className="text-sm font-medium text-ink">{label}</span>
         <span
-          className={`relative h-5 w-9 rounded-pill transition-colors ${active ? "bg-pine" : "bg-hairline"}`}
+          className={`relative h-5 w-9 rounded-pill transition-colors ${active ? "bg-coral" : "bg-hairline"}`}
         >
           <span
             className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${

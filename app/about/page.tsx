@@ -1,9 +1,11 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import { motion } from "framer-motion";
 import AuthGuard from "@/components/AuthGuard";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
+import MagneticButton from "@/components/MagneticButton";
 
 export default function AboutPage() {
   const [name, setName] = useState("");
@@ -26,32 +28,43 @@ export default function AboutPage() {
 
   return (
     <AuthGuard>
+      <div className="min-h-dvh bg-grid-paper">
       <Navbar />
       <main className="mx-auto max-w-3xl px-5 py-16 sm:px-8">
-        <section className="mb-16">
-          <h1 className="font-display text-4xl text-ink">About CRoom</h1>
+        <motion.section
+          initial={{ opacity: 0, y: 24 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+          className="mb-16"
+        >
+          <h1 className="font-display text-5xl text-ink">About CRoom</h1>
           <p className="mt-5 max-w-xl text-lg leading-relaxed text-ink/70">
-            CRoom exists on the belief that a conversation between two people shouldn't leave
-            a trace on someone else's server. It was founded by Chakar Randhawa on a simple
+            CRoom exists on the belief that a conversation between two people shouldn&apos;t leave
+            a trace on someone else&apos;s server. It was founded by Chakar Randhawa on a simple
             premise: your camera and your voice belong on your device, and only there, except
             for the fraction of a second it takes to reach the person you called.
           </p>
           <p className="mt-4 max-w-xl text-lg leading-relaxed text-ink/70">
-            Every call runs directly between browsers over WebRTC. We don't record calls, we
-            don't keep chat logs, and we don't build a profile of who you talk to.
+            Every call runs directly between browsers over WebRTC. We don&apos;t record calls, we
+            don&apos;t keep chat logs, and we don&apos;t build a profile of who you talk to.
           </p>
-        </section>
+        </motion.section>
 
-        <section>
-          <h2 className="font-display text-2xl text-ink">Contact us</h2>
+        <motion.section
+          initial={{ opacity: 0, y: 24 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true, margin: "-40px" }}
+          transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+        >
+          <h2 className="font-display text-3xl text-ink">Contact us</h2>
           <p className="mt-2 text-sm text-sage">
-            This form doesn't get stored anywhere — it opens your email client so the message
+            This form doesn&apos;t get stored anywhere — it opens your email client so the message
             goes straight to us.
           </p>
 
           {sent ? (
-            <p className="mt-6 rounded-tile bg-pine/10 px-4 py-3 text-sm text-pine-dark">
-              Your email client should be open now. If it didn't, write to hello@croom.app directly.
+            <p className="mt-6 rounded-tile bg-coral/10 px-4 py-3 text-sm text-coral-dark">
+              Your email client should be open now. If it didn&apos;t, write to hello@croom.app directly.
             </p>
           ) : (
             <form onSubmit={handleSubmit} className="mt-6 flex flex-col gap-4">
@@ -78,17 +91,18 @@ export default function AboutPage() {
                 rows={5}
                 className="resize-none rounded-tile border border-hairline bg-white px-4 py-3 text-sm outline-none focus:border-pine"
               />
-              <button
+              <MagneticButton
                 type="submit"
-                className="tactile self-start rounded-pill bg-pine px-6 py-3 text-sm font-semibold text-paper shadow-tile"
+                className="tactile self-start rounded-pill bg-coral px-6 py-3 text-sm font-bold text-paper shadow-tile"
               >
                 Send message
-              </button>
+              </MagneticButton>
             </form>
           )}
-        </section>
+        </motion.section>
       </main>
       <Footer />
+      </div>
     </AuthGuard>
   );
 }
