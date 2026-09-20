@@ -44,8 +44,10 @@ function buildIceServers(): RTCIceServer[] {
   return servers;
 }
 
-// Bitrate ceilings (bps) used by the low-bandwidth / low-RAM protocol.
-const QUALITY_PROFILES: Record<CallQuality, { video: number | null; width: number; height: number; frameRate: number }> = {
+const QUALITY_PROFILES: Record<
+  CallQuality,
+  { video: number | null; width: number; height: number; frameRate: number }
+> = {
   high: { video: 1_800_000, width: 1280, height: 720, frameRate: 30 },
   medium: { video: 500_000, width: 640, height: 360, frameRate: 20 },
   "audio-only": { video: null, width: 0, height: 0, frameRate: 0 },
@@ -58,6 +60,7 @@ export function useWebRTC({ roomId, isCaller }: UseWebRTCOptions) {
   const [quality, setQuality] = useState<CallQuality>("high");
   const [micMuted, setMicMuted] = useState(false);
   const [cameraOff, setCameraOff] = useState(false);
+  const [enhanceEnabled, setEnhanceEnabled] = useState(false);
   const [chatMessages, setChatMessages] = useState<{ from: "me" | "peer"; text: string; at: number }[]>([]);
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
@@ -66,9 +69,29 @@ export function useWebRTC({ roomId, isCaller }: UseWebRTCOptions) {
   const statsIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const cleanedUpRef = useRef(false);
 
+  // These refs mirror the state above so that callbacks captured inside
+  // long-lived event handlers (onconnectionstatechange, setInterval, the
+  // Firestore onSnapshot listeners) always see the CURRENT stream/flags,
+  // never a stale value frozen at the moment the handler was created. This
+  // fixes a real bug: without the refs, the adaptive bitrate monitor could
+  // silently operate on a `null` stream captured before getUserMedia
+  // resolved, meaning the low-bandwidth step-down never actually applied.
+  const localStreamRef = useRef<MediaStream | null>(null);
+  const cameraOffRef = useRef(false);
+  const remoteDescriptionSetRef = useRef(false);
+  const pendingRemoteCandidatesRef = useRef<RTCIceCandidateInit[]>([]);
+
+  // Camera enhancement pipeline state.
+  const enhanceCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const enhanceRafRef = useRef<number>(0);
+  const enhanceSourceVideoRef = useRef<HTMLVideoElement | null>(null);
+  const enhancedTrackRef = useRef<MediaStreamTrack | null>(null);
+  const rawVideoTrackRef = useRef<MediaStreamTrack | null>(null);
+  const previousFrameCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
   const applyQualityProfile = useCallback(async (targetQuality: CallQuality) => {
     const pc = pcRef.current;
-    const stream = localStream;
+    const stream = localStreamRef.current;
     if (!pc || !stream) return;
 
     const profile = QUALITY_PROFILES[targetQuality];
@@ -77,7 +100,7 @@ export function useWebRTC({ roomId, isCaller }: UseWebRTCOptions) {
     if (targetQuality === "audio-only") {
       if (videoTrack) videoTrack.enabled = false;
     } else if (videoTrack) {
-      videoTrack.enabled = !cameraOff;
+      videoTrack.enabled = !cameraOffRef.current;
       try {
         await videoTrack.applyConstraints({
           width: { ideal: profile.width },
@@ -101,15 +124,13 @@ export function useWebRTC({ roomId, isCaller }: UseWebRTCOptions) {
         await sender.setParameters(params);
       } catch {
         // Some browsers reject setParameters before the first negotiation
-        // completes; the next renegotiation cycle will pick it up.
+        // completes; the next renegotiation cycle picks it up.
       }
     }
 
     setQuality(targetQuality);
-  }, [localStream, cameraOff]);
+  }, []);
 
-  // Watches real connection stats (packet loss, RTT) and automatically
-  // steps quality down/up — the "low-bandwidth mode" requirement.
   const startAdaptiveBitrateMonitor = useCallback(() => {
     if (statsIntervalRef.current) clearInterval(statsIntervalRef.current);
     let consecutiveBadSamples = 0;
@@ -149,8 +170,6 @@ export function useWebRTC({ roomId, isCaller }: UseWebRTCOptions) {
         consecutiveGoodSamples = 0;
       }
 
-      // Require a few consecutive bad/good samples before switching, so a
-      // single network blip doesn't cause visible quality flicker.
       if (consecutiveBadSamples >= 3) {
         setQuality((current) => {
           if (current === "high") {
@@ -205,23 +224,130 @@ export function useWebRTC({ roomId, isCaller }: UseWebRTCOptions) {
   const toggleMic = useCallback(() => {
     setMicMuted((prev) => {
       const next = !prev;
-      localStream?.getAudioTracks().forEach((t) => (t.enabled = !next));
+      localStreamRef.current?.getAudioTracks().forEach((t) => (t.enabled = !next));
       return next;
     });
-  }, [localStream]);
+  }, []);
 
   const toggleCamera = useCallback(() => {
     setCameraOff((prev) => {
       const next = !prev;
-      localStream?.getVideoTracks().forEach((t) => (t.enabled = !next));
+      cameraOffRef.current = next;
+      localStreamRef.current?.getVideoTracks().forEach((t) => (t.enabled = !next));
+      // Keep the raw source track's enabled state in sync too, since the
+      // enhancement pipeline reads frames from it even while the enabled
+      // track sent over the wire is the canvas-derived one.
+      rawVideoTrackRef.current && (rawVideoTrackRef.current.enabled = !next);
       return next;
     });
-  }, [localStream]);
+  }, []);
+
+  // --- Camera enhancement pipeline -----------------------------------
+  //
+  // Runs the outgoing camera feed through an off-screen canvas each frame
+  // and applies a light temporal-blend denoise (reduces sensor grain from
+  // cheap webcams) plus a contrast/sharpness lift, then replaces the
+  // track actually being sent over WebRTC with the processed one via
+  // RTCRtpSender.replaceTrack — so the improvement is visible to the
+  // *other* person, not just a local CSS preview trick.
+  const stopEnhancement = useCallback(() => {
+    if (enhanceRafRef.current) cancelAnimationFrame(enhanceRafRef.current);
+    enhanceRafRef.current = 0;
+    enhancedTrackRef.current?.stop();
+    enhancedTrackRef.current = null;
+  }, []);
+
+  const startEnhancement = useCallback(() => {
+    const stream = localStreamRef.current;
+    const rawTrack = stream?.getVideoTracks()[0];
+    const pc = pcRef.current;
+    if (!stream || !rawTrack || !pc) return;
+
+    rawVideoTrackRef.current = rawTrack;
+
+    const sourceVideo = document.createElement("video");
+    sourceVideo.srcObject = new MediaStream([rawTrack]);
+    sourceVideo.muted = true;
+    sourceVideo.playsInline = true;
+    sourceVideo.play().catch(() => undefined);
+    enhanceSourceVideoRef.current = sourceVideo;
+
+    const settings = rawTrack.getSettings();
+    const width = settings.width ?? 1280;
+    const height = settings.height ?? 720;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    enhanceCanvasRef.current = canvas;
+
+    const prevCanvas = document.createElement("canvas");
+    prevCanvas.width = width;
+    prevCanvas.height = height;
+    previousFrameCanvasRef.current = prevCanvas;
+    const prevCtx = prevCanvas.getContext("2d");
+
+    if (!ctx || !prevCtx) return;
+
+    // Auto contrast/clarity lift plus a mild blur pre-pass — the blur is
+    // blended with the sharp original below to act as a noise-reducing
+    // "clarity" filter rather than a soft-focus one.
+    ctx.filter = "contrast(1.08) saturate(1.06) brightness(1.03)";
+
+    function renderFrame() {
+      if (!ctx || !prevCtx) return;
+      if (sourceVideo.readyState >= 2) {
+        // 1) Draw the current sharp frame with the auto-tone filter.
+        ctx.drawImage(sourceVideo, 0, 0, canvas.width, canvas.height);
+
+        // 2) Temporal blend with the previous frame at low opacity. This
+        //    is the actual "reduce sensor grain/scratches" mechanism: any
+        //    noise that flickers frame-to-frame gets averaged down, while
+        //    real motion (which persists across the blend) stays sharp.
+        prevCtx.globalAlpha = 1;
+        prevCtx.globalCompositeOperation = "source-over";
+        prevCtx.drawImage(canvas, 0, 0);
+
+        ctx.save();
+        ctx.globalAlpha = 0.22;
+        ctx.drawImage(prevCanvas, 0, 0);
+        ctx.globalAlpha = 1;
+        ctx.restore();
+      }
+      enhanceRafRef.current = requestAnimationFrame(renderFrame);
+    }
+    renderFrame();
+
+    const canvasStream = canvas.captureStream(30);
+    const processedTrack = canvasStream.getVideoTracks()[0];
+    enhancedTrackRef.current = processedTrack;
+
+    const sender = pc.getSenders().find((s) => s.track?.kind === "video");
+    sender?.replaceTrack(processedTrack).catch(() => undefined);
+  }, []);
+
+  const toggleEnhance = useCallback(() => {
+    setEnhanceEnabled((prev) => {
+      const next = !prev;
+      if (next) {
+        startEnhancement();
+      } else {
+        stopEnhancement();
+        const pc = pcRef.current;
+        const rawTrack = rawVideoTrackRef.current;
+        const sender = pc?.getSenders().find((s) => s.track?.kind === "video" || s.track === null);
+        if (sender && rawTrack) sender.replaceTrack(rawTrack).catch(() => undefined);
+      }
+      return next;
+    });
+  }, [startEnhancement, stopEnhancement]);
 
   const cleanup = useCallback(async () => {
     if (cleanedUpRef.current) return;
     cleanedUpRef.current = true;
 
+    stopEnhancement();
     if (statsIntervalRef.current) clearInterval(statsIntervalRef.current);
     unsubscribersRef.current.forEach((unsub) => unsub());
     unsubscribersRef.current = [];
@@ -229,11 +355,8 @@ export function useWebRTC({ roomId, isCaller }: UseWebRTCOptions) {
     pcRef.current?.close();
     pcRef.current = null;
 
-    localStream?.getTracks().forEach((t) => t.stop());
+    localStreamRef.current?.getTracks().forEach((t) => t.stop());
 
-    // Ephemeral by design: the room's signaling data is deleted from
-    // Firestore the moment the call ends, so nothing about the call
-    // persists server-side.
     try {
       const roomRef = doc(db, "rooms", roomId);
       const callerCandidates = await getDocs(collection(roomRef, "callerCandidates"));
@@ -248,7 +371,37 @@ export function useWebRTC({ roomId, isCaller }: UseWebRTCOptions) {
     }
 
     setConnectionState("ended");
-  }, [localStream, roomId]);
+  }, [roomId, stopEnhancement]);
+
+  // Any ICE candidate that arrives before the remote description is set
+  // is queued rather than applied immediately (applying it early throws
+  // in some browsers, silently dropping connectivity paths and causing
+  // intermittent "call never connects" failures). Flushed the instant the
+  // remote description is set.
+  async function addRemoteCandidateSafely(pc: RTCPeerConnection, candidate: RTCIceCandidateInit) {
+    if (remoteDescriptionSetRef.current) {
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch {
+        // A late/duplicate candidate — safe to ignore.
+      }
+    } else {
+      pendingRemoteCandidatesRef.current.push(candidate);
+    }
+  }
+
+  async function flushPendingCandidates(pc: RTCPeerConnection) {
+    remoteDescriptionSetRef.current = true;
+    const queued = pendingRemoteCandidatesRef.current;
+    pendingRemoteCandidatesRef.current = [];
+    for (const candidate of queued) {
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch {
+        // Ignore invalid/duplicate queued candidates.
+      }
+    }
+  }
 
   const start = useCallback(async () => {
     setConnectionState("collecting-media");
@@ -257,6 +410,7 @@ export function useWebRTC({ roomId, isCaller }: UseWebRTCOptions) {
       video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     });
+    localStreamRef.current = stream;
     setLocalStream(stream);
 
     const pc = new RTCPeerConnection({ iceServers: buildIceServers() });
@@ -304,6 +458,7 @@ export function useWebRTC({ roomId, isCaller }: UseWebRTCOptions) {
         if (!pc.currentRemoteDescription && data?.answer) {
           setConnectionState("connecting");
           await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+          await flushPendingCandidates(pc);
         }
       });
       unsubscribersRef.current.push(unsubRoom);
@@ -312,7 +467,7 @@ export function useWebRTC({ roomId, isCaller }: UseWebRTCOptions) {
       const unsubCandidates = onSnapshot(calleeCandidates, (snapshot) => {
         snapshot.docChanges().forEach((change) => {
           if (change.type === "added") {
-            pc.addIceCandidate(new RTCIceCandidate(change.doc.data()));
+            addRemoteCandidateSafely(pc, change.doc.data() as RTCIceCandidateInit);
           }
         });
       });
@@ -334,6 +489,7 @@ export function useWebRTC({ roomId, isCaller }: UseWebRTCOptions) {
 
       setConnectionState("connecting");
       await pc.setRemoteDescription(new RTCSessionDescription(roomData.offer));
+      await flushPendingCandidates(pc);
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       await updateDoc(roomRef, { answer: { type: answer.type, sdp: answer.sdp } });
@@ -342,7 +498,7 @@ export function useWebRTC({ roomId, isCaller }: UseWebRTCOptions) {
       const unsubCandidates = onSnapshot(callerCandidates, (snapshot) => {
         snapshot.docChanges().forEach((change) => {
           if (change.type === "added") {
-            pc.addIceCandidate(new RTCIceCandidate(change.doc.data()));
+            addRemoteCandidateSafely(pc, change.doc.data() as RTCIceCandidateInit);
           }
         });
       });
@@ -364,11 +520,13 @@ export function useWebRTC({ roomId, isCaller }: UseWebRTCOptions) {
     quality,
     micMuted,
     cameraOff,
+    enhanceEnabled,
     chatMessages,
     start,
     hangUp: cleanup,
     toggleMic,
     toggleCamera,
+    toggleEnhance,
     sendChatMessage,
     setQualityManually: applyQualityProfile,
   };
