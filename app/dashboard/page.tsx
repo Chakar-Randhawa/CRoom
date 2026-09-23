@@ -8,7 +8,6 @@ import Footer from "@/components/Footer";
 import DeviceSettings from "@/components/DeviceSettings";
 import CallByEmailModal from "@/components/CallByEmailModal";
 import CreateRoomModal from "@/components/CreateRoomModal";
-import IncomingCallBanner from "@/components/IncomingCallBanner";
 import MagneticButton from "@/components/MagneticButton";
 import { useAuth } from "@/context/AuthContext";
 
@@ -24,7 +23,6 @@ export default function DashboardPage() {
   return (
     <AuthGuard>
       <div className="min-h-dvh bg-grid-paper">
-        <IncomingCallBanner />
         <Navbar />
         <main className="mx-auto max-w-4xl px-5 py-10 sm:px-8">
           <motion.div

@@ -12,7 +12,8 @@
     "next": "14.2.35",
     "react": "18.3.1",
     "react-dom": "18.3.1",
-    "firebase": "10.12.4",
+    "firebase": "10.14.1",
+    "firebase-admin": "14.4.0",
     "framer-motion": "11.3.19",
     "qrcode.react": "3.1.0",
     "clsx": "2.1.1"

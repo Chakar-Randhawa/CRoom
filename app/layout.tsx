@@ -2,7 +2,9 @@ import type { Metadata, Viewport } from "next";
 import { Baloo_2, Inter } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/context/AuthContext";
+import { CallProvider } from "@/context/CallContext";
 import PageTransition from "@/components/PageTransition";
+import CallManager from "@/components/CallManager";
 
 const baloo = Baloo_2({
   subsets: ["latin"],
@@ -35,7 +37,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" className={`${baloo.variable} ${inter.variable}`}>
       <body className="bg-paper font-body text-ink antialiased">
         <AuthProvider>
-          <PageTransition>{children}</PageTransition>
+          <CallProvider>
+            {/* CallManager is a sibling of PageTransition, not nested
+                inside it — see the comment in CallManager.tsx for why
+                that matters. */}
+            <CallManager />
+            <PageTransition>{children}</PageTransition>
+          </CallProvider>
         </AuthProvider>
       </body>
     </html>

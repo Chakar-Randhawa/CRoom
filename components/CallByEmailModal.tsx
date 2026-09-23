@@ -2,15 +2,15 @@
 
 import { useState, type FormEvent } from "react";
 import { motion } from "framer-motion";
-import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
-import { findUserByEmail, generateRoomId, ringUser } from "@/lib/calling";
+import { useCall } from "@/context/CallContext";
+import { findUserByEmail, generateRoomId, ringUser, sendCallPushNotification } from "@/lib/calling";
 
 export default function CallByEmailModal({ onClose }: { onClose: () => void }) {
   const { user } = useAuth();
-  const router = useRouter();
+  const { startOutgoingCall } = useCall();
   const [email, setEmail] = useState("");
-  const [status, setStatus] = useState<"idle" | "searching" | "ringing" | "error">("idle");
+  const [status, setStatus] = useState<"idle" | "searching" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   async function handleSubmit(e: FormEvent) {
@@ -32,15 +32,37 @@ export default function CallByEmailModal({ onClose }: { onClose: () => void }) {
     }
 
     const roomId = generateRoomId();
-    await ringUser({
+    const inviteId = await ringUser({
       targetUid: target.uid,
       fromUid: user.uid,
       fromDisplayName: user.displayName ?? "A CRoom user",
       roomId,
     });
 
-    setStatus("ringing");
-    router.push(`/room#${roomId}:caller`);
+    // Hand off to the full-screen "Calling…" experience instead of
+    // jumping straight into the room — the room only opens once the
+    // other person actually accepts.
+    startOutgoingCall({
+      inviteId,
+      roomId,
+      targetUid: target.uid,
+      targetName: target.displayName,
+    });
+    onClose();
+
+    // Fire-and-forget: notifies the recipient even if their CRoom tab
+    // isn't open. Not awaited — it must never delay the outgoing-call
+    // screen, and it's a pure enhancement on top of the Firestore invite
+    // that already just fired above.
+    user.getIdToken().then((idToken) => {
+      sendCallPushNotification({
+        idToken,
+        targetUid: target.uid,
+        callerName: user.displayName ?? "A CRoom user",
+        roomId,
+        inviteId,
+      });
+    });
   }
 
   return (
@@ -80,10 +102,10 @@ export default function CallByEmailModal({ onClose }: { onClose: () => void }) {
             </button>
             <button
               type="submit"
-              disabled={status === "searching" || status === "ringing"}
+              disabled={status === "searching"}
               className="tactile flex-1 rounded-pill bg-coral px-4 py-3 text-sm font-bold text-paper disabled:opacity-60"
             >
-              {status === "searching" ? "Looking up…" : status === "ringing" ? "Ringing…" : "Call"}
+              {status === "searching" ? "Looking up…" : "Call"}
             </button>
           </div>
         </form>

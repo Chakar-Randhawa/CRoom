@@ -17,6 +17,7 @@ import {
 } from "firebase/auth";
 import { doc, setDoc } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
+import { initPresence } from "@/lib/presence";
 
 interface AuthContextValue {
   user: User | null;
@@ -39,6 +40,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
     return unsubscribe;
   }, []);
+
+  // Online/offline presence (Phase 1): starts the moment a user is signed
+  // in, so their status is live for anyone deciding whether to call them,
+  // and stops (marks them offline immediately) on logout rather than
+  // waiting for the disconnect hook.
+  useEffect(() => {
+    if (!user) return;
+    const stopPresence = initPresence(user.uid);
+    return stopPresence;
+  }, [user]);
 
   async function signUp(email: string, password: string, displayName: string) {
     const credential = await createUserWithEmailAndPassword(auth, email, password);

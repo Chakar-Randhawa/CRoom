@@ -2,9 +2,100 @@
 
 Privacy-first, browser-based video calling. Next.js 14 (App Router) + Firebase
 Auth (email/password only) + Firestore (used purely as an ephemeral WebRTC
-signaling channel) + native WebRTC for the actual call media.
+signaling channel) + Realtime Database (online/offline presence) + native
+WebRTC for the actual call media.
 
-## Updating your existing GitHub repo
+## Phase 1: Calling Experience Overhaul (NEW)
+
+This build adds a WhatsApp-style calling flow on top of the redesign from
+before:
+
+- **Caller side**: full-screen "Calling… / Ringing…" screen instead of being
+  dropped straight into the room. Shows the target's name, an "offline"
+  hint if they're not currently online, and a Cancel button. Auto-cancels
+  with "No answer" after 35 seconds if nobody responds.
+- **Callee side**: full-screen incoming-call overlay (not a small banner) —
+  caller's name, big Accept/Decline buttons — visible from ANY page in the
+  app (Dashboard, About, Why Choose Us), not just Dashboard.
+- **Real ringtones**: synthesized with the Web Audio API (no external sound
+  files, no licensing, works offline once the page has loaded) — a calmer
+  ring-back tone for the caller, a more urgent two-tone ring for the callee.
+- **Online/offline presence**: via Firebase Realtime Database — a SEPARATE
+  Firebase product from Firestore, with its own required setup step below.
+
+**New required setup step** — presence needs Realtime Database enabled:
+1. Firebase Console → your project → Build → Realtime Database → Create
+   Database (any region, start in locked mode).
+2. Copy the URL shown (looks like `https://your-project-default-rtdb.firebaseio.com`)
+   into `.env.local` as `NEXT_PUBLIC_FIREBASE_DATABASE_URL`.
+3. Realtime Database → Rules tab → paste in `database.rules.json` → Publish.
+4. Add the same `NEXT_PUBLIC_FIREBASE_DATABASE_URL` to Vercel's Environment
+   Variables (Vercel Dashboard → your project → Settings → Environment
+   Variables), otherwise presence won't work on the live site even though
+   it works locally.
+
+If this step is skipped, nothing breaks — presence just reports "unknown"
+instead of online/offline, and calling/ringing/timeout all work normally.
+
+## Phase 2: Background Push Notifications (NEW)
+
+Adds a second layer of "you got a call" alerting on top of Phase 1's
+in-app ringing, for when the CRoom tab isn't open at all:
+
+- **When the tab is open (foreground or backgrounded, not closed)**:
+  Phase 1's Firestore listener + full ringtone + full-screen overlay
+  already handles everything — Phase 2 doesn't duplicate any of that.
+- **When the tab/browser is fully closed**: a native OS notification
+  appears (title, "tap to answer", Accept happens by tapping it) via a
+  service worker running independently of the page. Clicking it opens/
+  focuses CRoom, which then shows the real incoming-call screen with
+  ringtone once the app is actually running.
+
+**An honest platform limitation, not a shortcoming of this build**: no
+browser (Chrome, Firefox, Safari — free or paid) lets a website play a
+continuous custom ringtone loop while completely closed. That's a
+deliberate browser security restriction (otherwise any site could blast
+audio in the background). The native notification is the correct,
+standard way every web app handles this — it's what you'll see from
+things like Gmail's web push, too.
+
+**Architecture — all genuinely free, no credit card anywhere**:
+- **Sending the push** needs a small server piece (a mobile/web push
+  message has to be signed and sent by something with admin credentials
+  — it can't be done straight from the browser). Firebase Cloud Functions
+  would normally do this, but Firebase requires a Blaze (pay-as-you-go)
+  plan — meaning a card on file — just to deploy a Cloud Function at all,
+  regardless of usage. So instead, `/api/send-notification` is a plain
+  Next.js API route, which runs as a Vercel serverless function on the
+  free Hobby plan (already what CRoom is deployed on) — no card needed.
+- **Firebase Cloud Messaging (FCM)** itself is entirely free, unlimited,
+  on Firebase's free Spark plan — this hasn't changed.
+
+**New required setup steps**:
+1. Firebase Console → Project settings → Cloud Messaging → Web
+   configuration → "Generate key pair" → copy the value into
+   `.env.local` as `NEXT_PUBLIC_FIREBASE_VAPID_KEY`.
+2. Firebase Console → Project settings → Service accounts → "Generate new
+   private key" → downloads a JSON file. Paste its entire contents as one
+   value into `.env.local` as `FIREBASE_SERVICE_ACCOUNT_KEY`. **Never**
+   commit this file or value anywhere public — it has full admin rights
+   to your Firebase project.
+3. Open `public/firebase-messaging-sw.js` and paste in the same 6
+   `NEXT_PUBLIC_FIREBASE_*` values you already have in `.env.local`.
+   Service workers can't read Next.js environment variables, so this one
+   file needs them hardcoded directly — this is standard practice for
+   every Firebase project's messaging service worker, and these values
+   are public identifiers, not secrets.
+4. Add all of the above (`NEXT_PUBLIC_FIREBASE_VAPID_KEY` and
+   `FIREBASE_SERVICE_ACCOUNT_KEY`) to Vercel's Environment Variables too,
+   the same way you did for the Realtime Database URL in Phase 1.
+
+If any of this is skipped, nothing breaks — the API route detects the
+missing config and returns a clean "not configured" response instead of
+crashing, and everything from Phase 1 (in-app ringing) keeps working
+exactly as before.
+
+
 
 I can't push to your repo directly from here — I don't have write access to
 your GitHub account. To bring your repo up to date with this version,

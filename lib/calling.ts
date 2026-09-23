@@ -9,6 +9,7 @@ import {
   onSnapshot,
   query,
   serverTimestamp,
+  updateDoc,
   where,
 } from "firebase/firestore";
 import { db } from "./firebase";
@@ -62,6 +63,42 @@ export async function cancelInvite(inviteId: string) {
   }
 }
 
+export type InviteStatus = "ringing" | "accepted" | "declined" | "cancelled" | "timeout";
+
+/** Updates the invite's status without deleting it — lets the OTHER side's
+ * listener see the terminal state (declined/accepted/etc.) before the
+ * document disappears. The caller side is responsible for eventually
+ * deleting the doc via cancelInvite() once it has processed that status,
+ * so there's a single, predictable place invites get cleaned up. */
+export async function updateInviteStatus(inviteId: string, status: InviteStatus) {
+  try {
+    await updateDoc(doc(db, "invites", inviteId), { status });
+  } catch {
+    // Doc may already be gone (declined right as it was cleaned up) — fine.
+  }
+}
+
+/** Live-watches a single invite doc for status changes (accepted/declined/
+ * cancelled/timeout) or deletion. Used by both the caller's "Calling…"
+ * screen and the callee's incoming-call overlay to stay in sync. */
+export function listenToInvite(
+  inviteId: string,
+  callback: (data: { status: InviteStatus; roomId: string; fromDisplayName: string } | null) => void
+) {
+  return onSnapshot(doc(db, "invites", inviteId), (snap) => {
+    if (!snap.exists()) {
+      callback(null);
+      return;
+    }
+    const data = snap.data();
+    callback({
+      status: data.status as InviteStatus,
+      roomId: data.roomId,
+      fromDisplayName: data.fromDisplayName,
+    });
+  });
+}
+
 export function listenForIncomingCalls(
   myUid: string,
   onIncoming: (invite: { id: string; fromDisplayName: string; roomId: string }) => void
@@ -76,4 +113,35 @@ export function listenForIncomingCalls(
       }
     });
   });
+}
+
+/**
+ * Phase 2: fires the background push notification for a call, on top of
+ * the Firestore invite that already handles the in-app experience.
+ * Deliberately fire-and-forget — a failed push should never block or
+ * delay the outgoing-call screen from appearing, since anyone with the
+ * CRoom tab open gets notified through Firestore regardless of whether
+ * this succeeds.
+ */
+export async function sendCallPushNotification(params: {
+  idToken: string;
+  targetUid: string;
+  callerName: string;
+  roomId: string;
+  inviteId: string;
+}) {
+  try {
+    await fetch("/api/send-notification", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${params.idToken}` },
+      body: JSON.stringify({
+        targetUid: params.targetUid,
+        callerName: params.callerName,
+        roomId: params.roomId,
+        inviteId: params.inviteId,
+      }),
+    });
+  } catch {
+    // Best-effort only — see comment above.
+  }
 }
