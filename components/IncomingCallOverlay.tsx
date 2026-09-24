@@ -34,6 +34,39 @@ export default function IncomingCallOverlay() {
     if (!incoming) return;
     playIncomingRingtone();
 
+    // If this tab is open but not the one the person is looking at
+    // (switched tabs, minimized, another app focused), also fire a plain
+    // browser notification immediately. This is deliberately a separate,
+    // simpler code path from the FCM/service-worker system in
+    // lib/messaging.ts — it needs no server round-trip at all, since this
+    // code only runs because the Firestore listener above is already
+    // live in this tab. That makes it reliable independent of whether
+    // the server-side push pipeline is configured correctly, and it
+    // covers the most common real case (tab open in the background)
+    // without waiting on a network request to Vercel and then to FCM.
+    if (
+      typeof document !== "undefined" &&
+      document.visibilityState === "hidden" &&
+      typeof Notification !== "undefined" &&
+      Notification.permission === "granted"
+    ) {
+      try {
+        const localNotification = new Notification(`Incoming call from ${incoming.fromDisplayName}`, {
+          body: "Tap to answer in CRoom",
+          tag: "croom-incoming-call",
+          requireInteraction: true,
+        });
+        localNotification.onclick = () => {
+          window.focus();
+          localNotification.close();
+        };
+      } catch {
+        // Some browsers restrict direct `new Notification()` calls in
+        // certain contexts — the ringtone and in-tab overlay above still
+        // work regardless, so this is a pure enhancement, not load-bearing.
+      }
+    }
+
     const unsubInvite = listenToInvite(incoming.id, (data) => {
       if (settledRef.current) return;
       if (!data || data.status === "cancelled" || data.status === "timeout") {

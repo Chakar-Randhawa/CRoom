@@ -5,10 +5,21 @@ import { adminAuth, adminMessaging, adminDb } from "@/lib/firebaseAdmin";
 // separate paid backend, no Firebase Cloud Functions (which require a
 // billing account even to deploy). This IS the "server" that Phase 2
 // needs, and it costs nothing.
+//
+// Debugging: every failure here is logged with console.error/warn, which
+// shows up in Vercel Dashboard -> your project -> Deployments -> latest
+// deployment -> Functions tab -> click "send-notification" -> Logs. If
+// pushes are failing, that's the place to look for the real reason.
 export const runtime = "nodejs";
+
+interface FirebaseAdminError {
+  code?: string;
+  message?: string;
+}
 
 export async function POST(request: NextRequest) {
   if (!adminAuth || !adminMessaging || !adminDb) {
+    console.warn("[send-notification] Not configured — FIREBASE_SERVICE_ACCOUNT_KEY missing or invalid.");
     return NextResponse.json(
       { error: "Push notifications aren't configured on this server yet." },
       { status: 503 }
@@ -23,7 +34,8 @@ export async function POST(request: NextRequest) {
 
   try {
     await adminAuth.verifyIdToken(idToken);
-  } catch {
+  } catch (err) {
+    console.warn("[send-notification] ID token verification failed.", err);
     return NextResponse.json({ error: "Invalid or expired auth token." }, { status: 401 });
   }
 
@@ -69,7 +81,41 @@ export async function POST(request: NextRequest) {
       },
     });
     return NextResponse.json({ sent: true });
-  } catch (err) {
-    return NextResponse.json({ sent: false, error: String(err) }, { status: 500 });
+  } catch (rawErr) {
+    const err = rawErr as FirebaseAdminError;
+    console.error("[send-notification] adminMessaging.send() failed.", {
+      code: err.code,
+      message: err.message,
+    });
+
+    // A stale/expired registration token isn't a server malfunction — the
+    // browser that issued it may have cleared storage, uninstalled the
+    // PWA, etc. Clean it up so future calls to this person don't keep
+    // hitting the same dead token, and report it as a normal (non-500)
+    // outcome, since the in-app overlay is unaffected either way.
+    if (err.code === "messaging/registration-token-not-registered") {
+      await adminDb.collection("users").doc(targetUid).update({ fcmToken: null }).catch(() => undefined);
+      return NextResponse.json({ sent: false, reason: "Recipient's push token had expired and was cleared." });
+    }
+
+    // The single most common first-time setup mistake: the VAPID key
+    // (NEXT_PUBLIC_FIREBASE_VAPID_KEY) and the service account
+    // (FIREBASE_SERVICE_ACCOUNT_KEY) belong to different Firebase
+    // projects. Surfacing this explicitly saves a lot of guessing.
+    if (err.code === "messaging/mismatched-credential" || err.code === "messaging/sender-id-mismatch") {
+      return NextResponse.json(
+        {
+          sent: false,
+          error:
+            "The VAPID key and the service account appear to belong to different Firebase projects. Double-check both come from the SAME project in Firebase Console.",
+        },
+        { status: 400 }
+      );
+    }
+
+    return NextResponse.json(
+      { sent: false, error: err.message ?? String(rawErr), code: err.code },
+      { status: 500 }
+    );
   }
 }
