@@ -453,12 +453,32 @@ export function useWebRTC({ roomId, isCaller }: UseWebRTCOptions) {
 
       setConnectionState("waiting-for-peer");
 
+      // Firestore's onSnapshot can fire this callback more than once in
+      // quick succession for the same write (once from local cache,
+      // again on server ack). Both invocations can pass a
+      // "!pc.currentRemoteDescription" check before either one's `await`
+      // resolves, so setRemoteDescription(answer) ends up called twice —
+      // the second call then throws "Called in wrong state: stable",
+      // since the connection is no longer negotiating an answer at that
+      // point. This is exactly the bug that left real calls stuck on
+      // "waiting"/"connecting" forever. Fixed with a synchronous guard
+      // set BEFORE any await, plus checking signalingState directly
+      // (the actual WebRTC-spec-correct precondition for accepting an
+      // answer) instead of only inferring it from currentRemoteDescription.
+      let settingRemoteAnswer = false;
       const unsubRoom = onSnapshot(roomRef, async (snapshot) => {
         const data = snapshot.data();
-        if (!pc.currentRemoteDescription && data?.answer) {
-          setConnectionState("connecting");
+        if (settingRemoteAnswer || pc.signalingState !== "have-local-offer" || !data?.answer) {
+          return;
+        }
+        settingRemoteAnswer = true;
+        setConnectionState("connecting");
+        try {
           await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
           await flushPendingCandidates(pc);
+        } catch (err) {
+          console.warn("[CRoom] Failed to set remote answer description.", err);
+          settingRemoteAnswer = false;
         }
       });
       unsubscribersRef.current.push(unsubRoom);
