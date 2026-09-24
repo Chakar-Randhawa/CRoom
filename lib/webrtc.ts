@@ -6,7 +6,6 @@ import {
   collection,
   deleteDoc,
   doc,
-  getDoc,
   getDocs,
   onSnapshot,
   serverTimestamp,
@@ -500,15 +499,41 @@ export function useWebRTC({ roomId, isCaller }: UseWebRTCOptions) {
         if (event.candidate) addDoc(calleeCandidates, event.candidate.toJSON());
       };
 
-      const roomSnap = await getDoc(roomRef);
-      const roomData = roomSnap.data();
-      if (!roomData?.offer) {
+      setConnectionState("waiting-for-peer");
+
+      // The callee lands here the instant Accept is tapped — but the
+      // caller only creates the room's offer AFTER its own separate
+      // Firestore listener notices the "accepted" status and reacts,
+      // which is a real round-trip that hasn't necessarily finished yet.
+      // A one-time getDoc() here can genuinely run before that offer
+      // exists on a normal, successful call — not just a slow one — which
+      // is exactly what caused "This room could not be reached" to show
+      // up on real, working calls. Waiting live for the offer to appear
+      // (rather than checking once and giving up) fixes this properly.
+      const offer = await new Promise<{ type: RTCSdpType; sdp: string } | null>((resolve) => {
+        let unsubscribe = () => {};
+        const timeoutId = setTimeout(() => {
+          unsubscribe();
+          resolve(null);
+        }, 20000);
+
+        unsubscribe = onSnapshot(roomRef, (snapshot) => {
+          const data = snapshot.data();
+          if (data?.offer) {
+            clearTimeout(timeoutId);
+            unsubscribe();
+            resolve(data.offer);
+          }
+        });
+      });
+
+      if (!offer) {
         setConnectionState("error");
         return;
       }
 
       setConnectionState("connecting");
-      await pc.setRemoteDescription(new RTCSessionDescription(roomData.offer));
+      await pc.setRemoteDescription(new RTCSessionDescription(offer));
       await flushPendingCandidates(pc);
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
